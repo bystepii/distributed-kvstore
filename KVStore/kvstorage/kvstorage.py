@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from typing import Union, List
 
 from KVStore.protos.kv_store_pb2 import *
@@ -12,13 +13,15 @@ EVENTUAL_CONSISTENCY_INTERVAL: int = 2
 logger = logging.getLogger("KVStore")
 
 
-class KVStorageService:
+class KVStorageService(ABC):
+
     """
     Skeleton class for key-value storage service
     """
     def __init__(self):
         pass
 
+    @abstractmethod
     def get(self, key: int) -> str | None:
         """
         Get the value associated with the key
@@ -27,6 +30,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def l_pop(self, key: int) -> str | None:
         """
         Return the rightmost character of the value associated with the key and remove it from the value.
@@ -39,6 +43,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def r_pop(self, key: int) -> str | None:
         """
         Return the leftmost character of the value associated with the key and remove it from the value.
@@ -51,6 +56,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def put(self, key: int, value: str):
         """
         Put the value associated with the key. If the key already exists, overwrite the value.
@@ -59,6 +65,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def append(self, key: int, value: str):
         """
         Concatenate the value to the end of the value associated with the key. If the key does not exist, create a new
@@ -68,6 +75,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
         """
         Redistribute the keys and values in the range [lower_val, upper_val] to the destination server.
@@ -80,6 +88,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def transfer(self, keys_values: list):
         """
         Transfer the keys and values to the destination server.
@@ -89,6 +98,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def add_replica(self, server: str):
         """
         Add a secondary replica to the replica master.
@@ -96,6 +106,7 @@ class KVStorageService:
         """
         pass
 
+    @abstractmethod
     def remove_replica(self, server: str):
         """
         Remove a secondary replica from the replica master.
@@ -141,14 +152,16 @@ class KVStorageSimpleService(KVStorageService):
         self.kv_store[key] = self.kv_store.get(key, "") + value
 
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
-        """
-        To fill with your code
-        """
+        raise NotImplementedError
 
     def transfer(self, keys_values: List[KeyValue]):
-        """
-        To fill with your code
-        """
+        raise NotImplementedError
+
+    def add_replica(self, server: str):
+        raise NotImplementedError
+
+    def remove_replica(self, server: str):
+        raise NotImplementedError
 
 
 class KVStorageReplicasService(KVStorageSimpleService):
