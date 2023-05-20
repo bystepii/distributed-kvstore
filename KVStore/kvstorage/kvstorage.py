@@ -229,6 +229,7 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: GetResponse
         """
+        return GetResponse(value=self.storage_service.get(request.key))
 
     def LPop(self, request: GetRequest, context: ServicerContext) -> GetResponse:
         """
@@ -238,6 +239,7 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: GetResponse
         """
+        return GetResponse(value=self.storage_service.l_pop(request.key))
 
     def RPop(self, request: GetRequest, context: ServicerContext) -> GetResponse:
         """
@@ -247,6 +249,7 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: GetResponse
         """
+        return GetResponse(value=self.storage_service.r_pop(request.key))
 
     def Put(self, request: PutRequest, context: ServicerContext) -> Empty:
         """
@@ -256,6 +259,8 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.storage_service.put(request.key, request.value)
+        return Empty()
 
     def Append(self, request: AppendRequest, context: ServicerContext) -> Empty:
         """
@@ -265,6 +270,8 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.storage_service.append(request.key, request.value)
+        return Empty()
 
     def Redistribute(self, request: RedistributeRequest, context: ServicerContext) -> Empty:
         """
@@ -274,6 +281,8 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.storage_service.redistribute(request.destination_server, request.lower_val, request.upper_val)
+        return Empty()
 
     def Transfer(self, request: TransferRequest, context: ServicerContext) -> Empty:
         """
@@ -283,6 +292,8 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.storage_service.transfer(list(request.keys_values))
+        return Empty()
 
     def AddReplica(self, request: ServerRequest, context: ServicerContext) -> Empty:
         """
@@ -292,6 +303,8 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.storage_service.add_replica(request.server)
+        return Empty()
 
     def RemoveReplica(self, request: ServerRequest, context: ServicerContext) -> Empty:
         """
@@ -301,3 +314,5 @@ class KVStorageServicer(KVStoreServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.storage_service.remove_replica(request.server)
+        return Empty()
