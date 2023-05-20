@@ -151,6 +151,8 @@ class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.shard_master_service.join(request.server)
+        return Empty()
 
     def Leave(self, request: LeaveRequest, context: grpc.ServicerContext) -> Empty:
         """
@@ -161,6 +163,8 @@ class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
         :param context: grpc.ServicerContext
         :return: Empty
         """
+        self.shard_master_service.leave(request.server)
+        return Empty()
 
     def Query(self, request: QueryRequest, context: grpc.ServicerContext) -> QueryResponse:
         """
@@ -170,6 +174,7 @@ class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
         :param context: grpc.ServicerContext
         :return: QueryResponse with the shard address
         """
+        return QueryResponse(server=self.shard_master_service.query(request.key))
 
     def JoinReplica(self, request: JoinRequest, context: grpc.ServicerContext) -> JoinReplicaResponse:
         """
@@ -180,6 +185,7 @@ class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
         :param context: grpc.ServicerContext
         :return: JoinReplicaResponse with the replica role
         """
+        return JoinReplicaResponse(role=self.shard_master_service.join_replica(request.server))
 
     def QueryReplica(self, request: QueryReplicaRequest, context: grpc.ServicerContext) -> QueryResponse:
         """
@@ -192,3 +198,4 @@ class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
         :param context: grpc.ServicerContext
         :return: QueryReplicaResponse with the replica address
         """
+        return QueryResponse(server=self.shard_master_service.query_replica(request.key, request.operation))
