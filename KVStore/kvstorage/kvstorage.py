@@ -106,35 +106,39 @@ class KVStorageService:
 
 class KVStorageSimpleService(KVStorageService):
 
+    """
+    Simple implementation of KVStorageService using a dictionary
+    """
     def __init__(self):
-        """
-        To fill with your code
-        """
+        super().__init__()
+        self.kv_store = dict()
 
-    def get(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+    def get(self, key: int) -> str | None:
+        return self.kv_store.get(key)
 
-    def l_pop(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+    def l_pop(self, key: int) -> str | None:
+        value = self.kv_store.get(key)
+        if value is None:
+            return None
+        if len(value) == 0:
+            return ""
+        self.kv_store[key] = value[:-1]
+        return value[-1]
 
-    def r_pop(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+    def r_pop(self, key: int) -> str | None:
+        value = self.kv_store.get(key)
+        if value is None:
+            return None
+        if len(value) == 0:
+            return ""
+        self.kv_store[key] = value[1:]
+        return value[0]
 
     def put(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        self.kv_store[key] = value
 
     def append(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        self.kv_store[key] = self.kv_store.get(key, "") + value
 
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
         """
