@@ -36,7 +36,7 @@ class KVStorageService(ABC):
     @abstractmethod
     def l_pop(self, key: int) -> str | None:
         """
-        Return the rightmost character of the value associated with the key and remove it from the value.
+        Return the leftmost character of the value associated with the key and remove it from the value.
 
         If the last character is removed, the value becomes an empty string ("").
         If l_pop is called on an empty string, return an empty string ("").
@@ -49,7 +49,7 @@ class KVStorageService(ABC):
     @abstractmethod
     def r_pop(self, key: int) -> str | None:
         """
-        Return the leftmost character of the value associated with the key and remove it from the value.
+        Return the rightmost character of the value associated with the key and remove it from the value.
 
         If the last character is removed, the value becomes an empty string ("").
         If r_pop is called on an empty string, return an empty string ("").
@@ -136,8 +136,8 @@ class KVStorageSimpleService(KVStorageService):
             return None
         if len(value) == 0:
             return ""
-        self.kv_store[key] = value[:-1]
-        return value[-1]
+        self.kv_store[key] = value[1:]
+        return value[0]
 
     def r_pop(self, key: int) -> str | None:
         value = self.kv_store.get(key)
@@ -145,8 +145,8 @@ class KVStorageSimpleService(KVStorageService):
             return None
         if len(value) == 0:
             return ""
-        self.kv_store[key] = value[1:]
-        return value[0]
+        self.kv_store[key] = value[:-1]
+        return value[-1]
 
     def put(self, key: int, value: str):
         self.kv_store[key] = value
