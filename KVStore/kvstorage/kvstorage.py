@@ -4,6 +4,9 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Union, List
 
+from google.protobuf.empty_pb2 import Empty
+from grpc import ServicerContext
+
 from KVStore.protos.kv_store_pb2 import *
 from KVStore.protos.kv_store_pb2_grpc import KVStoreServicer
 from KVStore.protos.kv_store_shardmaster_pb2 import Role
@@ -211,53 +214,90 @@ class KVStorageReplicasService(KVStorageSimpleService):
 
 class KVStorageServicer(KVStoreServicer):
 
+    """
+    gRPC servicer for KVStorageService
+
+    :param service: KVStorageService implementation
+    """
     def __init__(self, service: KVStorageService):
         self.storage_service = service
+
+    def Get(self, request: GetRequest, context: ServicerContext) -> GetResponse:
         """
-        To fill with your code
+        Get the value associated with the key.
+        :param request: GetRequest
+        :param context: grpc.ServicerContext
+        :return: GetResponse
         """
 
-    def Get(self, request: GetRequest, context) -> GetResponse:
+    def LPop(self, request: GetRequest, context: ServicerContext) -> GetResponse:
         """
-        To fill with your code
+        Remove and return the leftmost character of the value associated with the key.
+
+        :param request: GetRequest
+        :param context: grpc.ServicerContext
+        :return: GetResponse
         """
 
-    def LPop(self, request: GetRequest, context) -> GetResponse:
+    def RPop(self, request: GetRequest, context: ServicerContext) -> GetResponse:
         """
-        To fill with your code
+        Remove and return the rightmost character of the value associated with the key.
+
+        :param request: GetRequest
+        :param context: grpc.ServicerContext
+        :return: GetResponse
         """
 
-    def RPop(self, request: GetRequest, context) -> GetResponse:
+    def Put(self, request: PutRequest, context: ServicerContext) -> Empty:
         """
-        To fill with your code
+        Set the value associated with the key.
+
+        :param request: PutRequest
+        :param context: grpc.ServicerContext
+        :return: Empty
         """
 
-    def Put(self, request: PutRequest, context) -> google_dot_protobuf_dot_empty__pb2.Empty:
+    def Append(self, request: AppendRequest, context: ServicerContext) -> Empty:
         """
-        To fill with your code
+        Concatenate the value to the end of the value associated with the key.
+
+        :param request: AppendRequest
+        :param context: grpc.ServicerContext
+        :return: Empty
         """
 
-    def Append(self, request: AppendRequest, context) -> google_dot_protobuf_dot_empty__pb2.Empty:
+    def Redistribute(self, request: RedistributeRequest, context: ServicerContext) -> Empty:
         """
-        To fill with your code
+        Redistribute the keys and values to the destination server.
+
+        :param request: RedistributeRequest
+        :param context: grpc.ServicerContext
+        :return: Empty
         """
 
-    def Redistribute(self, request: RedistributeRequest, context) -> google_dot_protobuf_dot_empty__pb2.Empty:
+    def Transfer(self, request: TransferRequest, context: ServicerContext) -> Empty:
         """
-        To fill with your code
+        Transfer the keys and values to the destination server.
+
+        :param request: TransferRequest
+        :param context: grpc.ServicerContext
+        :return: Empty
         """
 
-    def Transfer(self, request: TransferRequest, context) -> google_dot_protobuf_dot_empty__pb2.Empty:
+    def AddReplica(self, request: ServerRequest, context: ServicerContext) -> Empty:
         """
-        To fill with your code
+        Add a secondary replica to the replica master.
+
+        :param request: ServerRequest
+        :param context: grpc.ServicerContext
+        :return: Empty
         """
 
-    def AddReplica(self, request: ServerRequest, context) -> google_dot_protobuf_dot_empty__pb2.Empty:
+    def RemoveReplica(self, request: ServerRequest, context: ServicerContext) -> Empty:
         """
-        To fill with your code
-        """
+        Remove a secondary replica from the replica master.
 
-    def RemoveReplica(self, request: ServerRequest, context) -> google_dot_protobuf_dot_empty__pb2.Empty:
-        """
-        To fill with your code
+        :param request: ServerRequest
+        :param context: grpc.ServicerContext
+        :return: Empty
         """
