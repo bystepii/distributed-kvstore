@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Union, List
+from typing import Union, List, Dict
 
+import grpc
 from google.protobuf.empty_pb2 import Empty
 from grpc import ServicerContext
 
+from KVStore.protos import kv_store_pb2_grpc
 from KVStore.protos.kv_store_pb2 import *
-from KVStore.protos.kv_store_pb2_grpc import KVStoreServicer
+from KVStore.protos.kv_store_pb2_grpc import KVStoreServicer, KVStoreStub
 from KVStore.protos.kv_store_shardmaster_pb2 import Role
 
 EVENTUAL_CONSISTENCY_INTERVAL: int = 2
@@ -125,7 +127,8 @@ class KVStorageSimpleService(KVStorageService):
     """
     def __init__(self):
         super().__init__()
-        self.kv_store = dict()
+        self.kv_store: Dict[int, str] = {}
+        self.channels: Dict[str, grpc.Channel] = {}
 
     def get(self, key: int) -> str | None:
         return self.kv_store.get(key)
@@ -155,10 +158,23 @@ class KVStorageSimpleService(KVStorageService):
         self.kv_store[key] = self.kv_store.get(key, "") + value
 
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
-        raise NotImplementedError
+        # Save the channel to avoid creating a new channel every time
+        channel = self.channels.get(destination_server, grpc.insecure_channel(destination_server))
+        self.channels[destination_server] = channel
+
+        # Transfer the keys and values in the range [lower_val, upper_val] to the destination server
+        KVStoreStub(channel).Transfer(TransferRequest(keys_values=[
+            KeyValue(key=key, value=value) for key, value in self.kv_store.items() if lower_val <= key <= upper_val
+        ]))
+
+        # Delete the keys and values in the range [lower_val, upper_val] from the local storage
+        for key in list(self.kv_store.keys()):
+            if lower_val <= key <= upper_val:
+                del self.kv_store[key]
 
     def transfer(self, keys_values: List[KeyValue]):
-        raise NotImplementedError
+        for key_value in keys_values:
+            self.kv_store[key_value.key] = key_value.value
 
     def add_replica(self, server: str):
         raise NotImplementedError
