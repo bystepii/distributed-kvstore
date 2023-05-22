@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from threading import Lock
 from typing import Union, List, Dict
 
 import grpc
@@ -129,52 +130,61 @@ class KVStorageSimpleService(KVStorageService):
         super().__init__()
         self.kv_store: Dict[int, str] = {}
         self.channels: Dict[str, grpc.Channel] = {}
+        self.lock = Lock()
 
     def get(self, key: int) -> str | None:
-        return self.kv_store.get(key)
+        with self.lock:
+            return self.kv_store.get(key)
 
     def l_pop(self, key: int) -> str | None:
-        value = self.kv_store.get(key)
-        if value is None:
-            return None
-        if len(value) == 0:
-            return ""
-        self.kv_store[key] = value[1:]
-        return value[0]
+        with self.lock:
+            value = self.kv_store.get(key)
+            if value is None:
+                return None
+            if len(value) == 0:
+                return ""
+            self.kv_store[key] = value[1:]
+            return value[0]
 
     def r_pop(self, key: int) -> str | None:
-        value = self.kv_store.get(key)
-        if value is None:
-            return None
-        if len(value) == 0:
-            return ""
-        self.kv_store[key] = value[:-1]
-        return value[-1]
+        with self.lock:
+            value = self.kv_store.get(key)
+            if value is None:
+                return None
+            if len(value) == 0:
+                return ""
+            self.kv_store[key] = value[:-1]
+            return value[-1]
 
     def put(self, key: int, value: str):
-        self.kv_store[key] = value
+        with self.lock:
+            self.kv_store[key] = value
 
     def append(self, key: int, value: str):
-        self.kv_store[key] = self.kv_store.get(key, "") + value
+        with self.lock:
+            self.kv_store[key] = self.kv_store.get(key, "") + value
 
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
-        # Save the channel to avoid creating a new channel every time
-        channel = self.channels.get(destination_server, grpc.insecure_channel(destination_server))
-        self.channels[destination_server] = channel
+        with self.lock:
 
-        # Transfer the keys and values in the range [lower_val, upper_val] to the destination server
-        KVStoreStub(channel).Transfer(TransferRequest(keys_values=[
-            KeyValue(key=key, value=value) for key, value in self.kv_store.items() if lower_val <= key <= upper_val
-        ]))
+            # Save the channel to avoid creating a new channel every time
+            channel = self.channels.get(destination_server, grpc.insecure_channel(destination_server))
+            self.channels[destination_server] = channel
 
-        # Delete the keys and values in the range [lower_val, upper_val] from the local storage
-        for key in list(self.kv_store.keys()):
-            if lower_val <= key <= upper_val:
-                del self.kv_store[key]
+            # Transfer the keys and values in the range [lower_val, upper_val] to the destination server
+            KVStoreStub(channel).Transfer(TransferRequest(keys_values=[
+                KeyValue(key=key, value=value) for key, value in self.kv_store.items() if lower_val <= key <= upper_val
+            ]))
+
+            # Delete the keys and values in the range [lower_val, upper_val] from the local storage
+            for key in list(self.kv_store.keys()):
+                if lower_val <= key <= upper_val:
+                    del self.kv_store[key]
 
     def transfer(self, keys_values: List[KeyValue]):
-        for key_value in keys_values:
-            self.kv_store[key_value.key] = key_value.value
+        with self.lock:
+            for key_value in keys_values:
+                self.kv_store[key_value.key] = key_value.value
 
     def add_replica(self, server: str):
         raise NotImplementedError
