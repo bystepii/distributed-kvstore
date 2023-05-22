@@ -1,26 +1,30 @@
 import logging
 from abc import ABC, abstractmethod
+from math import ceil
+from typing import Dict
 
 import grpc
 from google.protobuf.empty_pb2 import Empty
+from intervaltree import IntervalTree
 
 from KVStore.protos import kv_store_shardmaster_pb2_grpc
-from KVStore.tests.utils import KEYS_LOWER_THRESHOLD, KEYS_UPPER_THRESHOLD
-from KVStore.protos.kv_store_pb2 import RedistributeRequest, ServerRequest
+from KVStore.protos.kv_store_pb2 import RedistributeRequest
 from KVStore.protos.kv_store_pb2_grpc import KVStoreStub
 from KVStore.protos.kv_store_shardmaster_pb2 import *
+from KVStore.tests.utils import KEYS_LOWER_THRESHOLD, KEYS_UPPER_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
 
 class ShardMasterService(ABC):
-
     """
     Skeleton class for shard master service
     """
+
     def __init__(self):
         pass
 
+    @abstractmethod
     def join(self, server: str):
         """
         Join a new server to the system.
@@ -78,19 +82,47 @@ class ShardMasterService(ABC):
 
 
 class ShardMasterSimpleService(ShardMasterService):
-
     """
     Simple shard master service.
     """
+
     def __init__(self):
-        """
-        To fill with your code
-        """
+        super().__init__()
+        self.servers: IntervalTree[str] = IntervalTree()
+        self.channels: Dict[str, grpc.Channel] = {}
 
     def join(self, server: str):
-        """
-        To fill with your code
-        """
+        self.channels[server] = grpc.insecure_channel(server)
+
+        if len(self.servers) == 0:
+            self.servers.addi(KEYS_LOWER_THRESHOLD, KEYS_UPPER_THRESHOLD + 1, server)  # inclusive upper bound
+            return
+
+        # Calculate new ranges
+        num_servers = len(self.servers) + 1
+        range_size = ceil((KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1) / num_servers)
+
+        new_ranges: IntervalTree[str] = IntervalTree()
+        servers_sorted = sorted(self.servers)  # sorted list of servers by start key
+        servers = [interval.data for interval in servers_sorted]  # sorted list of servers by start key
+        servers.append(server)  # add new server to the list
+
+        start = KEYS_LOWER_THRESHOLD
+        for i in range(num_servers):
+            end = min(start + range_size, KEYS_UPPER_THRESHOLD + 1)
+            new_ranges.addi(start, end, servers[i])
+            start = end
+
+        new_ranges_sorted = sorted(new_ranges)
+
+        # Redistribute keys
+        for i, interval in enumerate(servers_sorted):
+            start, end = interval.begin, interval.end
+            server = interval.data
+            new_start, new_end = new_ranges_sorted[i].begin, new_ranges_sorted[i].end
+            KVStoreStub(self.channels[server]).Redistribute(
+                RedistributeRequest(destination_server=servers[i + 1], lower_val=new_start, upper_val=end)
+            )
 
     def leave(self, server: str):
         """
@@ -133,12 +165,12 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
 
 
 class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
-
     """
     gRPC servicer for shard master service
 
     :param shard_master_service: shard master service
     """
+
     def __init__(self, shard_master_service: ShardMasterService):
         self.shard_master_service = shard_master_service
 
