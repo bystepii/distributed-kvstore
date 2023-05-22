@@ -1,11 +1,12 @@
 import logging
 from abc import ABC, abstractmethod
 from math import ceil
-from typing import Dict
+from threading import Lock
+from typing import Dict, List
 
 import grpc
 from google.protobuf.empty_pb2 import Empty
-from intervaltree import IntervalTree
+from intervaltree import IntervalTree, Interval
 
 from KVStore.protos import kv_store_shardmaster_pb2_grpc
 from KVStore.protos.kv_store_pb2 import RedistributeRequest
@@ -88,51 +89,107 @@ class ShardMasterSimpleService(ShardMasterService):
 
     def __init__(self):
         super().__init__()
-        self.servers: IntervalTree[str] = IntervalTree()
+        self.servers: List[str] = []
+        self.interval_size: int = KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1
         self.channels: Dict[str, grpc.Channel] = {}
+        self.lock = Lock()
 
     def join(self, server: str):
-        self.channels[server] = grpc.insecure_channel(server)
+        with self.lock:
+            self.channels[server] = grpc.insecure_channel(server)
 
-        if len(self.servers) == 0:
-            self.servers.addi(KEYS_LOWER_THRESHOLD, KEYS_UPPER_THRESHOLD + 1, server)  # inclusive upper bound
-            return
+            if len(self.servers) == 0:
+                self.servers.append(server)
+                return
 
-        # Calculate new ranges
-        num_servers = len(self.servers) + 1
-        range_size = ceil((KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1) / num_servers)
+            # Calculate new ranges
+            num_servers = len(self.servers)
+            new_num_servers = num_servers + 1
+            new_interval_size = ceil((KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1) / new_num_servers)
 
-        new_ranges: IntervalTree[str] = IntervalTree()
-        servers_sorted = sorted(self.servers)  # sorted list of servers by start key
-        servers = [interval.data for interval in servers_sorted]  # sorted list of servers by start key
-        servers.append(server)  # add new server to the list
+            # Add new server
+            self.servers.append(server)
 
-        start = KEYS_LOWER_THRESHOLD
-        for i in range(num_servers):
-            end = min(start + range_size, KEYS_UPPER_THRESHOLD + 1)
-            new_ranges.addi(start, end, servers[i])
-            start = end
+            # Redistribute keys
+            for i in range(num_servers):
+                start, end = i * self.interval_size, (i + 1) * self.interval_size
+                new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
+                KVStoreStub(self.channels[server]).Redistribute(
+                    RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
+                )
 
-        new_ranges_sorted = sorted(new_ranges)
-
-        # Redistribute keys
-        for i, interval in enumerate(servers_sorted):
-            start, end = interval.begin, interval.end
-            server = interval.data
-            new_start, new_end = new_ranges_sorted[i].begin, new_ranges_sorted[i].end
-            KVStoreStub(self.channels[server]).Redistribute(
-                RedistributeRequest(destination_server=servers[i + 1], lower_val=new_start, upper_val=end)
-            )
+            self.interval_size = new_interval_size
 
     def leave(self, server: str):
-        """
-        To fill with your code
-        """
+        with self.lock:
+            if server not in self.channels:
+                return
+
+            # special case: only one server left after removal
+            if len(self.servers) == 2:
+                self.servers.remove(server)
+                self.interval_size = KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1
+                KVStoreStub(self.channels.pop(server)).Redistribute(
+                    RedistributeRequest(
+                        destination_server=self.servers[0],
+                        lower_val=KEYS_LOWER_THRESHOLD,
+                        upper_val=KEYS_UPPER_THRESHOLD + 1
+                    )
+                )
+                return
+
+            # Calculate new ranges
+            num_servers = len(self.servers)
+            new_num_servers = num_servers - 1
+            new_interval_size = ceil((KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1) / new_num_servers)
+
+            index = self.servers.index(server)  # get index of server to be removed
+
+            # Redistribute keys
+
+            # Case 1: server is the first server
+            if index == 0:
+                # iterate through all servers except the last one
+                for i in range(0, num_servers - 2):
+                    start, end = i * self.interval_size, (i + 1) * self.interval_size
+                    new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
+                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
+                    )
+            # Case 2: server is the last server
+            elif index == num_servers - 1:
+                # iterate backwards through all servers except the first one
+                for i in range(num_servers - 1, 1, -1):
+                    start, end = (i - 1) * self.interval_size, i * self.interval_size
+                    new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
+                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
+                    )
+            # Case 3: server is in the middle
+            else:
+                # iterate forwards through all servers except the last one
+                for i in range(index, num_servers - 2):
+                    # transfer only half of the keys to the next server forwards
+                    start, end = i * self.interval_size, (i + 1) * self.interval_size
+                    new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
+                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
+                    )
+                # iterate backwards through all servers except the first one
+                for i in range(index, 1, -1):
+                    # transfer the other half of the keys to the next server backwards
+                    start, end = (i - 1) * self.interval_size, i * self.interval_size
+                    new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
+                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
+                    )
+
+            # Remove server
+            self.servers.remove(server)
+            self.interval_size = new_interval_size
 
     def query(self, key: int) -> str:
-        """
-        To fill with your code
-        """
+        return self.servers[(key - KEYS_LOWER_THRESHOLD) // self.interval_size]
 
     def join_replica(self, server: str) -> Role:
         raise NotImplementedError

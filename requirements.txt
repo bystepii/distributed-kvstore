@@ -2,4 +2,3 @@ grpcio
 tabulate
 grpcio-tools
 KVStore
-intervaltree
