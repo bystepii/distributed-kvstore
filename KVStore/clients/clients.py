@@ -61,38 +61,46 @@ class SimpleClient(KVStorageService):
         self.channel.close()
 
 
-class ShardClient(SimpleClient):
+class ShardClient(KVStorageService):
     def __init__(self, shard_master_address: str):
+        super().__init__()
         self.channel = grpc.insecure_channel(shard_master_address)
         self.stub = ShardMasterStub(self.channel)
-        """
-        To fill with your code
-        """
+        self.channels: Dict[str, grpc.Channel] = {}
 
     def get(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+        return _get_return(self._query_shard(key).Get(GetRequest(key=key)))
 
     def l_pop(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+        return _get_return(self._query_shard(key).LPop(GetRequest(key=key)))
 
     def r_pop(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+        return _get_return(self._query_shard(key).RPop(GetRequest(key=key)))
 
     def put(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        return self._query_shard(key).Put(PutRequest(key=key, value=value))
 
     def append(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        return self._query_shard(key).Append(PutRequest(key=key, value=value))
+
+    def _query_shard(self, key: int) -> KVStoreStub:
+        server = self.stub.Query(QueryRequest(key=key)).server
+        channel = self.channels.get(server, grpc.insecure_channel(server))
+        self.channels[server] = channel
+        stub = KVStoreStub(channel)
+        return stub
+
+    def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
+        raise NotImplementedError
+
+    def transfer(self, keys_values: list):
+        raise NotImplementedError
+
+    def add_replica(self, server: str):
+        raise NotImplementedError
+
+    def remove_replica(self, server: str):
+        raise NotImplementedError
 
 
 class ShardReplicaClient(ShardClient):
