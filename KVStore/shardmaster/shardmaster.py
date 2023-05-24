@@ -196,7 +196,8 @@ class ShardMasterSimpleService(ShardMasterService):
     def query(self, key: int) -> str:
         if key < KEYS_LOWER_THRESHOLD or key > KEYS_UPPER_THRESHOLD:
             raise ValueError(f"Key {key} out of range")
-        return self.servers[(key - KEYS_LOWER_THRESHOLD) // self.interval_size]
+        with self.lock:
+            return self.servers[(key - KEYS_LOWER_THRESHOLD) // self.interval_size]
 
     def join_replica(self, server: str) -> Role:
         raise NotImplementedError
@@ -209,7 +210,7 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
     def __init__(self, number_of_shards: int):
         super().__init__()
         self.number_of_shards = number_of_shards
-        self.master_to_replicas: Dict[str, List[str]] = {}
+        self.master_to_replicas: Dict[str, Set[str]] = {}
         self.replica_to_master: Dict[str, str] = {}
         self._lock = Lock()
 
@@ -236,15 +237,13 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
             # for the first number_of_shards servers, assign them to be masters
             if len(self.servers) < self.number_of_shards:
                 super().join(server)
-                self.master_to_replicas[server] = []
+                self.master_to_replicas[server] = set()
                 return Role.MASTER
 
             # for the rest of the servers, assign them to be replicas
             # add the replica to the replica master with the least number of replicas
             least = min(self.master_to_replicas, key=lambda x: len(self.master_to_replicas[x]))
-            if least not in self.master_to_replicas:
-                self.master_to_replicas[least] = []
-            self.master_to_replicas[least].append(server)
+            self.master_to_replicas[least].add(server)
             self.replica_to_master[server] = least
 
             # notify the replica master of the new replica
@@ -261,7 +260,7 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
 
             # if the operation is a read operation, return random replica
             if op == Operation.GET:
-                replica = random.sample(self.master_to_replicas[shard], 1)[0]
+                replica = random.sample(sorted(self.master_to_replicas[shard]) + [shard], 1)[0]
                 if replica:
                     return replica
             return shard
