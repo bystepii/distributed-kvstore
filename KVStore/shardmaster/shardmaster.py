@@ -1,14 +1,15 @@
 import logging
+import random
 from abc import ABC, abstractmethod
 from math import ceil
 from threading import Lock
-from typing import Dict, List
+from typing import Dict, List, Set
 
 import grpc
 from google.protobuf.empty_pb2 import Empty
 
 from KVStore.protos import kv_store_shardmaster_pb2_grpc
-from KVStore.protos.kv_store_pb2 import RedistributeRequest
+from KVStore.protos.kv_store_pb2 import RedistributeRequest, ServerRequest
 from KVStore.protos.kv_store_pb2_grpc import KVStoreStub
 from KVStore.protos.kv_store_shardmaster_pb2 import *
 from KVStore.tests.utils import KEYS_LOWER_THRESHOLD, KEYS_UPPER_THRESHOLD
@@ -205,24 +206,62 @@ class ShardMasterSimpleService(ShardMasterService):
 class ShardMasterReplicasService(ShardMasterSimpleService):
     def __init__(self, number_of_shards: int):
         super().__init__()
-        """
-        To fill with your code
-        """
+        self.number_of_shards = number_of_shards
+        self.master_to_replicas: Dict[str, Set[str]] = {}
+        self.replica_to_master: Dict[str, str] = {}
+        self._lock = Lock()
 
     def leave(self, server: str):
-        """
-        To fill with your code
-        """
+        with self._lock:
+            # if the server is a master, remove it from the list of servers
+            if server in self.servers:
+                super().leave(server)
+                return
+
+            # if the server is a replica, remove it from the list of replicas
+            if server in self.replica_to_master:
+                master = self.replica_to_master[server]
+                self.master_to_replicas[master].remove(server)
+                del self.replica_to_master[server]
+
+                # notify the master of the removal of the replica
+                KVStoreStub(self.channels[master]).RemoveReplica(
+                    ServerRequest(server=server)
+                )
 
     def join_replica(self, server: str) -> Role:
-        """
-        To fill with your code
-        """
+        with self._lock:
+            # for the first number_of_shards servers, assign them to be masters
+            if len(self.servers) < self.number_of_shards:
+                super().join(server)
+                return Role.MASTER
+
+            # for the rest of the servers, assign them to be replicas
+            # add the replica to the replica master with the least number of replicas
+            least = min(self.master_to_replicas, key=lambda x: len(self.master_to_replicas[x]))
+            if least not in self.master_to_replicas:
+                self.master_to_replicas[least] = set()
+            self.master_to_replicas[least].add(server)
+            self.replica_to_master[server] = least
+
+            # notify the replica master of the new replica
+            KVStoreStub(self.channels[least]).AddReplica(
+                ServerRequest(server=server)
+            )
+
+            return Role.REPLICA
 
     def query_replica(self, key: int, op: Operation) -> str:
-        """
-        To fill with your code
-        """
+        with self._lock:
+            # get the shard index
+            shard = self.query(key)
+
+            # if the operation is a read operation, return random replica
+            if op == Operation.GET:
+                replica = random.sample(self.master_to_replicas[shard], 1)[0]
+                if replica:
+                    return replica
+            return shard
 
 
 class ShardMasterServicer(kv_store_shardmaster_pb2_grpc.ShardMasterServicer):
