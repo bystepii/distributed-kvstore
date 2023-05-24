@@ -90,6 +90,11 @@ class ShardClient(KVStorageService):
         stub = KVStoreStub(channel)
         return stub
 
+    def stop(self):
+        self.channel.close()
+        for channel in self.channels.values():
+            channel.close()
+
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
         raise NotImplementedError
 
