@@ -110,27 +110,26 @@ class ShardClient(KVStorageService):
 
 class ShardReplicaClient(ShardClient):
 
-    def get(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+    def __init__(self, shard_master_address: str):
+        super().__init__(shard_master_address)
+        self.channels: Dict[str, grpc.Channel] = {}
 
-    def l_pop(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+    def get(self, key: int) -> str | None:
+        return _get_return(self._query_replica(key, Operation.GET).Get(GetRequest(key=key)))
 
-    def r_pop(self, key: int) -> Union[str, None]:
-        """
-        To fill with your code
-        """
+    def l_pop(self, key: int) -> str | None:
+        return _get_return(self._query_replica(key, Operation.L_POP).LPop(GetRequest(key=key)))
+
+    def r_pop(self, key: int) -> str | None:
+        return _get_return(self._query_replica(key, Operation.R_POP).RPop(GetRequest(key=key)))
 
     def put(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        return self._query_replica(key, Operation.PUT).Put(PutRequest(key=key, value=value))
 
     def append(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        return self._query_replica(key, Operation.APPEND).Append(PutRequest(key=key, value=value))
+
+    def _query_replica(self, key: int, operation: Operation) -> KVStoreStub:
+        server = self.stub.QueryReplica(QueryReplicaRequest(key=key, operation=operation)).server
+        self.channels[server] = grpc.insecure_channel(server)
+        return KVStoreStub(self.channels[server])
