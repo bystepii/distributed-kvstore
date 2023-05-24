@@ -6,7 +6,6 @@ from typing import Dict, List
 
 import grpc
 from google.protobuf.empty_pb2 import Empty
-from intervaltree import IntervalTree, Interval
 
 from KVStore.protos import kv_store_shardmaster_pb2_grpc
 from KVStore.protos.kv_store_pb2 import RedistributeRequest
@@ -114,8 +113,8 @@ class ShardMasterSimpleService(ShardMasterService):
             for i in range(num_servers):
                 start, end = i * self.interval_size, (i + 1) * self.interval_size
                 new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
-                KVStoreStub(self.channels[server]).Redistribute(
-                    RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
+                KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                    RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_end, upper_val=end)
                 )
 
             self.interval_size = new_interval_size
@@ -136,6 +135,11 @@ class ShardMasterSimpleService(ShardMasterService):
                         upper_val=KEYS_UPPER_THRESHOLD + 1
                     )
                 )
+                return
+
+            # special case: no servers
+            if len(self.servers) == 1:
+                self.servers.remove(server)
                 return
 
             # Calculate new ranges
