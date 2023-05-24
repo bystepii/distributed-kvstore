@@ -244,6 +244,15 @@ class KVStorageReplicasService(KVStorageSimpleService):
             self.replicas.add(server)
             self.channels[server] = grpc.insecure_channel(server)
 
+            # initial transfer
+            KVStoreStub(self.channels[server]).Transfer(TransferRequest(keys_values=[
+                KeyValue(key=key, value=value) for key, value in self.kv_store.items()
+            ]))
+
+            # If the consistency level is reached, set the random sample
+            if len(self.replicas) >= self.consistency_level and len(self.sample) == 0:
+                self._set_sample()
+
     def remove_replica(self, server: str):
         with self._lock:
             if self.role != Role.MASTER:
@@ -254,11 +263,21 @@ class KVStorageReplicasService(KVStorageSimpleService):
     def _update_loop(self):
         while True:
             with self._lock:
-                for replica in (self.replicas - set(self.sample)):
-                    KVStoreStub(self.channels[replica]).Transfer(TransferRequest(keys_values=[
-                        KeyValue(key=key, value=value) for key, value in self.kv_store.items() if key in self.dirty_keys
-                    ]))
+                # Transfer the dirty keys to the replicas not in the sample
+                if len(self.dirty_keys) > 0:
+                    for replica in (self.replicas - self.sample):
+                        KVStoreStub(self.channels[replica]).Transfer(TransferRequest(keys_values=[
+                            KeyValue(key=key, value=value)
+                            for key, value in self.kv_store.items() if key in self.dirty_keys
+                        ]))
+
+                # Clear the dirty keys and set a new sample
+                self.dirty_keys.clear()
+                self._set_sample()
             time.sleep(EVENTUAL_CONSISTENCY_INTERVAL)
+
+    def _set_sample(self):
+        self.sample = set(random.sample(sorted(self.replicas), min(self.consistency_level, len(self.replicas))))
 
     def set_role(self, role: Role):
         logger.info(f"Got role {role}")
