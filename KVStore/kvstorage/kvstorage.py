@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
 from abc import ABC, abstractmethod
-from threading import Lock
-from typing import Union, List, Dict
+from threading import Lock, Thread
+from typing import Union, List, Dict, Set
 
 import grpc
 from google.protobuf.empty_pb2 import Empty
@@ -20,10 +22,10 @@ logger = logging.getLogger("KVStore")
 
 
 class KVStorageService(ABC):
-
     """
     Skeleton class for key-value storage service
     """
+
     def __init__(self):
         pass
 
@@ -122,10 +124,10 @@ class KVStorageService(ABC):
 
 
 class KVStorageSimpleService(KVStorageService):
-
     """
     Simple implementation of KVStorageService using a dictionary
     """
+
     def __init__(self):
         super().__init__()
         self.kv_store: Dict[int, str] = {}
@@ -166,7 +168,6 @@ class KVStorageSimpleService(KVStorageService):
 
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
         with self.lock:
-
             # Save the channel to avoid creating a new channel every time
             channel = self.channels.get(destination_server, grpc.insecure_channel(destination_server))
             self.channels[destination_server] = channel
@@ -199,52 +200,80 @@ class KVStorageReplicasService(KVStorageSimpleService):
     def __init__(self, consistency_level: int):
         super().__init__()
         self.consistency_level = consistency_level
-        """
-        To fill with your code
-        """
+        self.replicas: Set[str] = set()
+        self.sample: Set[str] = set()
+        self.dirty_keys: Set[int] = set()
+        self._lock = Lock()
+        self.thread = Thread(target=self._update_loop)
 
     def l_pop(self, key: int) -> str:
-        """
-        To fill with your code
-        """
+        with self._lock:
+            if self.role == Role.MASTER:
+                for replica in self.sample:
+                    KVStoreStub(self.channels[replica]).LPop(GetRequest(key=key))
+            return super().l_pop(key)
 
     def r_pop(self, key: int) -> str:
-        """
-        To fill with your code
-        """
+        with self._lock:
+            if self.role == Role.MASTER:
+                self.dirty_keys.add(key)
+                for replica in self.sample:
+                    KVStoreStub(self.channels[replica]).RPop(GetRequest(key=key))
+            return super().r_pop(key)
 
     def put(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        with self._lock:
+            super().put(key, value)
+            if self.role == Role.MASTER:
+                self.dirty_keys.add(key)
+                for replica in self.sample:
+                    KVStoreStub(self.channels[replica]).Put(PutRequest(key=key, value=value))
 
     def append(self, key: int, value: str):
-        """
-        To fill with your code
-        """
+        with self._lock:
+            super().append(key, value)
+            if self.role == Role.MASTER:
+                self.dirty_keys.add(key)
+                for replica in self.sample:
+                    KVStoreStub(self.channels[replica]).Append(AppendRequest(key=key, value=value))
 
     def add_replica(self, server: str):
-        """
-        To fill with your code
-        """
+        with self._lock:
+            if self.role != Role.MASTER:
+                raise TypeError("Only the master can add a replica")
+            self.replicas.add(server)
+            self.channels[server] = grpc.insecure_channel(server)
 
     def remove_replica(self, server: str):
-        """
-        To fill with your code
-        """
+        with self._lock:
+            if self.role != Role.MASTER:
+                raise TypeError("Only the master can remove a replica")
+            self.replicas.remove(server)
+            del self.channels[server]
+
+    def _update_loop(self):
+        while True:
+            with self._lock:
+                for replica in (self.replicas - set(self.sample)):
+                    KVStoreStub(self.channels[replica]).Transfer(TransferRequest(keys_values=[
+                        KeyValue(key=key, value=value) for key, value in self.kv_store.items() if key in self.dirty_keys
+                    ]))
+            time.sleep(EVENTUAL_CONSISTENCY_INTERVAL)
 
     def set_role(self, role: Role):
         logger.info(f"Got role {role}")
         self.role = role
+        if role == Role.MASTER:
+            self.thread.start()
 
 
 class KVStorageServicer(KVStoreServicer):
-
     """
     gRPC servicer for KVStorageService
 
     :param service: KVStorageService implementation
     """
+
     def __init__(self, service: KVStorageService):
         self.storage_service = service
 
