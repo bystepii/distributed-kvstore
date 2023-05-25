@@ -256,11 +256,11 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
     def query_replica(self, key: int, op: Operation) -> str:
         with self._lock:
             # get the shard index
-            shard = self.query(key)
+            shard = super().query(key)
 
             # if the operation is a read operation, return random replica
             if op == Operation.GET:
-                replica = random.sample(sorted(self.master_to_replicas[shard]) + [shard], 1)[0]
+                replica = random.sample(list(self.master_to_replicas[shard]) + [shard], 1)[0]
                 if replica:
                     return replica
             return shard

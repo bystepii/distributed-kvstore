@@ -204,7 +204,7 @@ class KVStorageReplicasService(KVStorageSimpleService):
         self.sample: Set[str] = set()
         self.dirty_keys: Set[int] = set()
         self._lock = Lock()
-        self.thread = Thread(target=self._update_loop)
+        self.thread = Thread(target=self._update_loop, daemon=True)
 
     def l_pop(self, key: int) -> str:
         with self._lock:
@@ -262,22 +262,23 @@ class KVStorageReplicasService(KVStorageSimpleService):
 
     def _update_loop(self):
         while True:
-            with self._lock:
-                # Transfer the dirty keys to the replicas not in the sample
-                if len(self.dirty_keys) > 0:
-                    for replica in (self.replicas - self.sample):
-                        KVStoreStub(self.channels[replica]).Transfer(TransferRequest(keys_values=[
-                            KeyValue(key=key, value=value)
-                            for key, value in self.kv_store.items() if key in self.dirty_keys
-                        ]))
+            if len(self.replicas) > self.consistency_level:
+                with self._lock:
+                    # Transfer the dirty keys to the replicas not in the sample
+                    if len(self.dirty_keys) > 0:
+                        for replica in (self.replicas - self.sample):
+                            KVStoreStub(self.channels[replica]).Transfer(TransferRequest(keys_values=[
+                                KeyValue(key=key, value=value)
+                                for key, value in self.kv_store.items() if key in self.dirty_keys
+                            ]))
 
-                # Clear the dirty keys and set a new sample
-                self.dirty_keys.clear()
-                self._set_sample()
+                    # Clear the dirty keys and set a new sample
+                    self.dirty_keys.clear()
+                    self._set_sample()
             time.sleep(EVENTUAL_CONSISTENCY_INTERVAL)
 
     def _set_sample(self):
-        self.sample = set(random.sample(sorted(self.replicas), min(self.consistency_level, len(self.replicas))))
+        self.sample = set(random.sample(list(self.replicas), min(self.consistency_level, len(self.replicas))))
 
     def set_role(self, role: Role):
         logger.info(f"Got role {role}")

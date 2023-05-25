@@ -131,5 +131,6 @@ class ShardReplicaClient(ShardClient):
 
     def _query_replica(self, key: int, operation: Operation) -> KVStoreStub:
         server = self.stub.QueryReplica(QueryReplicaRequest(key=key, operation=operation)).server
-        self.channels[server] = grpc.insecure_channel(server)
+        channel = self.channels.get(server, grpc.insecure_channel(server))
+        self.channels[server] = channel
         return KVStoreStub(self.channels[server])
