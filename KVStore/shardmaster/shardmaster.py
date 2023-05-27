@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import random
 from abc import ABC, abstractmethod
@@ -6,6 +7,7 @@ from threading import Lock
 from typing import Dict, List, Set
 
 import grpc
+import grpc.aio
 from google.protobuf.empty_pb2 import Empty
 
 from KVStore.protos import kv_store_shardmaster_pb2_grpc
@@ -15,6 +17,16 @@ from KVStore.protos.kv_store_shardmaster_pb2 import *
 from KVStore.tests.utils import KEYS_LOWER_THRESHOLD, KEYS_UPPER_THRESHOLD
 
 logger = logging.getLogger(__name__)
+
+LOOP = asyncio.get_event_loop()
+
+
+def get_loop():
+    global LOOP
+    if LOOP is None:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(LOOP)
+    return LOOP
 
 
 class ShardMasterService(ABC):
@@ -90,13 +102,17 @@ class ShardMasterSimpleService(ShardMasterService):
     def __init__(self):
         super().__init__()
         self.servers: List[str] = []
+        self.channels: Dict[str, grpc.aio.Channel] = {}
+        self.stubs: Dict[str, KVStoreStub] = {}
         self.interval_size: int = KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1
-        self.channels: Dict[str, grpc.Channel] = {}
         self.lock = Lock()
 
     def join(self, server: str):
         with self.lock:
-            self.channels[server] = grpc.insecure_channel(server)
+            loop = get_loop()
+
+            self.channels[server] = grpc.aio.insecure_channel(server)
+            self.stubs[server] = KVStoreStub(self.channels[server])
 
             if len(self.servers) == 0:
                 self.servers.append(server)
@@ -110,37 +126,47 @@ class ShardMasterSimpleService(ShardMasterService):
             # Add new server
             self.servers.append(server)
 
+            async def redistribute():
+                futures = []
+                for i in range(num_servers):
+                    start, end = i * self.interval_size, (i + 1) * self.interval_size
+                    new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
+                    futures.append(self.stubs[self.servers[i]].Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_end, upper_val=end)
+                    ))
+                await asyncio.gather(*futures)
+
             # Redistribute keys
-            for i in range(num_servers):
-                start, end = i * self.interval_size, (i + 1) * self.interval_size
-                new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
-                KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                    RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_end, upper_val=end)
-                )
+            loop.run_until_complete(redistribute())
 
             self.interval_size = new_interval_size
 
     def leave(self, server: str):
         with self.lock:
-            if server not in self.channels:
+            if server not in self.servers:
                 return
+
+            loop = get_loop()
 
             # special case: only one server left after removal
             if len(self.servers) == 2:
                 self.servers.remove(server)
                 self.interval_size = KEYS_UPPER_THRESHOLD - KEYS_LOWER_THRESHOLD + 1
-                KVStoreStub(self.channels.pop(server)).Redistribute(
+                loop.run_until_complete(self.stubs.pop(server).Redistribute(
                     RedistributeRequest(
                         destination_server=self.servers[0],
                         lower_val=KEYS_LOWER_THRESHOLD,
                         upper_val=KEYS_UPPER_THRESHOLD + 1
                     )
-                )
+                ))
+                del self.channels[server]
                 return
 
             # special case: no servers
             if len(self.servers) == 1:
                 self.servers.remove(server)
+                del self.channels[server]
+                del self.stubs[server]
                 return
 
             # Calculate new ranges
@@ -150,27 +176,35 @@ class ShardMasterSimpleService(ShardMasterService):
 
             index = self.servers.index(server)  # get index of server to be removed
 
-            # Redistribute keys
+            async def redistribute():
+                futures = []
 
-            # iterate forwards through all servers except the last one
-            for i in range(index, num_servers - 1):
-                # transfer only half of the keys to the next server forwards
-                start, end = i * self.interval_size, (i + 1) * self.interval_size
-                new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
-                KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                    RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
-                )
-            # iterate backwards through all servers except the first one
-            for i in reversed(range(1, index + 1)):
-                # transfer the other half of the keys to the next server backwards
-                start, end = (i - 1) * self.interval_size, i * self.interval_size
-                new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
-                KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                    RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
-                )
+                # iterate forwards through all servers except the last one
+                for i in range(index, num_servers - 1):
+                    # transfer only half of the keys to the next server forwards
+                    start, end = i * self.interval_size, (i + 1) * self.interval_size
+                    new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
+                    futures.append(self.stubs[self.servers[i]].Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
+                    ))
+                # iterate backwards through all servers except the first one
+                for i in reversed(range(1, index + 1)):
+                    # transfer the other half of the keys to the next server backwards
+                    start, end = (i - 1) * self.interval_size, i * self.interval_size
+                    new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
+                    futures.append(self.stubs[self.servers[i]].Redistribute(
+                        RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
+                    ))
+
+                await asyncio.gather(*futures)
+
+            # Redistribute keys
+            loop.run_until_complete(redistribute())
 
             # Remove server
             self.servers.remove(server)
+            del self.channels[server]
+            del self.stubs[server]
             self.interval_size = new_interval_size
 
     def query(self, key: int) -> str:
@@ -196,6 +230,7 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
 
     def leave(self, server: str):
         with self._lock:
+
             # if the server is a master, remove it from the list of servers
             if server in self.servers:
                 super().leave(server)
@@ -208,9 +243,9 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
                 del self.replica_to_master[server]
 
                 # notify the master of the removal of the replica
-                KVStoreStub(self.channels[master]).RemoveReplica(
+                get_loop().run_until_complete(self.stubs[master].RemoveReplica(
                     ServerRequest(server=server)
-                )
+                ))
 
     def join_replica(self, server: str) -> Role:
         with self._lock:
@@ -227,9 +262,9 @@ class ShardMasterReplicasService(ShardMasterSimpleService):
             self.replica_to_master[server] = least
 
             # notify the replica master of the new replica
-            KVStoreStub(self.channels[least]).AddReplica(
+            get_loop().run_until_complete(self.stubs[least].AddReplica(
                 ServerRequest(server=server)
-            )
+            ))
 
             return Role.REPLICA
 

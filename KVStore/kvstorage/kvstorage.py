@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import time
@@ -8,6 +9,7 @@ from threading import Lock, Thread
 from typing import Union, List, Dict, Set
 
 import grpc
+import grpc.aio
 from google.protobuf.empty_pb2 import Empty
 from grpc import ServicerContext
 
@@ -19,6 +21,16 @@ from KVStore.protos.kv_store_shardmaster_pb2 import Role
 EVENTUAL_CONSISTENCY_INTERVAL: int = 2
 
 logger = logging.getLogger("KVStore")
+
+LOOP = asyncio.get_event_loop()
+
+
+def get_loop():
+    global LOOP
+    if LOOP is None:
+        loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(LOOP)
+    return LOOP
 
 
 class KVStorageService(ABC):
@@ -131,7 +143,8 @@ class KVStorageSimpleService(KVStorageService):
     def __init__(self):
         super().__init__()
         self.kv_store: Dict[int, str] = {}
-        self.channels: Dict[str, grpc.Channel] = {}
+        self.channels: Dict[str, grpc.aio.Channel] = {}
+        self.stubs: Dict[str, KVStoreStub] = {}
         self.lock = Lock()
 
     def get(self, key: int) -> str | None:
@@ -168,14 +181,17 @@ class KVStorageSimpleService(KVStorageService):
 
     def redistribute(self, destination_server: str, lower_val: int, upper_val: int):
         with self.lock:
+            loop = get_loop()
+
             # Save the channel to avoid creating a new channel every time
-            channel = self.channels.get(destination_server, grpc.insecure_channel(destination_server))
-            self.channels[destination_server] = channel
+            if destination_server not in self.channels:
+                self.channels[destination_server] = grpc.aio.insecure_channel(destination_server)
+                self.stubs[destination_server] = KVStoreStub(self.channels[destination_server])
 
             # Transfer the keys and values in the range [lower_val, upper_val] to the destination server
-            KVStoreStub(channel).Transfer(TransferRequest(keys_values=[
+            loop.run_until_complete(self.stubs[destination_server].Transfer(TransferRequest(keys_values=[
                 KeyValue(key=key, value=value) for key, value in self.kv_store.items() if lower_val <= key <= upper_val
-            ]))
+            ])))
 
             # Delete the keys and values in the range [lower_val, upper_val] from the local storage
             for key in list(self.kv_store.keys()):
@@ -209,16 +225,19 @@ class KVStorageReplicasService(KVStorageSimpleService):
     def l_pop(self, key: int) -> str:
         with self._lock:
             if self.role == Role.MASTER:
-                for replica in self.sample:
-                    KVStoreStub(self.channels[replica]).LPop(GetRequest(key=key))
+                self.dirty_keys.add(key)
+                get_loop().run_until_complete(asyncio.gather(*[
+                    self.stubs[replica].LPop(GetRequest(key=key)) for replica in self.sample
+                ]))
             return super().l_pop(key)
 
     def r_pop(self, key: int) -> str:
         with self._lock:
             if self.role == Role.MASTER:
                 self.dirty_keys.add(key)
-                for replica in self.sample:
-                    KVStoreStub(self.channels[replica]).RPop(GetRequest(key=key))
+                get_loop().run_until_complete(asyncio.gather(*[
+                    self.stubs[replica].RPop(GetRequest(key=key)) for replica in self.sample
+                ]))
             return super().r_pop(key)
 
     def put(self, key: int, value: str):
@@ -226,28 +245,34 @@ class KVStorageReplicasService(KVStorageSimpleService):
             super().put(key, value)
             if self.role == Role.MASTER:
                 self.dirty_keys.add(key)
-                for replica in self.sample:
-                    KVStoreStub(self.channels[replica]).Put(PutRequest(key=key, value=value))
+                get_loop().run_until_complete(asyncio.gather(*[
+                    self.stubs[replica].Put(PutRequest(key=key, value=value)) for replica in self.sample
+                ]))
 
     def append(self, key: int, value: str):
         with self._lock:
             super().append(key, value)
             if self.role == Role.MASTER:
                 self.dirty_keys.add(key)
-                for replica in self.sample:
-                    KVStoreStub(self.channels[replica]).Append(AppendRequest(key=key, value=value))
+                get_loop().run_until_complete(asyncio.gather(*[
+                    self.stubs[replica].Append(AppendRequest(key=key, value=value)) for replica in self.sample
+                ]))
 
     def add_replica(self, server: str):
         with self._lock:
             if self.role != Role.MASTER:
                 raise TypeError("Only the master can add a replica")
+
+            loop = get_loop()
+
             self.replicas.add(server)
-            self.channels[server] = grpc.insecure_channel(server)
+            self.channels[server] = grpc.aio.insecure_channel(server)
+            self.stubs[server] = KVStoreStub(self.channels[server])
 
             # initial transfer
-            KVStoreStub(self.channels[server]).Transfer(TransferRequest(keys_values=[
+            loop.run_until_complete(self.stubs[server].Transfer(TransferRequest(keys_values=[
                 KeyValue(key=key, value=value) for key, value in self.kv_store.items()
-            ]))
+            ])))
 
             # If the consistency level is reached, set the random sample
             if len(self.replicas) >= self.consistency_level and len(self.sample) == 0:
@@ -259,18 +284,19 @@ class KVStorageReplicasService(KVStorageSimpleService):
                 raise TypeError("Only the master can remove a replica")
             self.replicas.remove(server)
             del self.channels[server]
+            del self.stubs[server]
 
     def _update_loop(self):
         while True:
-            if len(self.replicas) > self.consistency_level:
+            if len(self.replicas) > self.consistency_level and len(self.dirty_keys) > 0:
                 with self._lock:
                     # Transfer the dirty keys to the replicas not in the sample
-                    if len(self.dirty_keys) > 0:
-                        for replica in (self.replicas - self.sample):
-                            KVStoreStub(self.channels[replica]).Transfer(TransferRequest(keys_values=[
-                                KeyValue(key=key, value=value)
-                                for key, value in self.kv_store.items() if key in self.dirty_keys
-                            ]))
+                    get_loop().run_until_complete(asyncio.gather(*[
+                        self.stubs[replica].Transfer(TransferRequest(keys_values=[
+                            KeyValue(key=key, value=value)
+                            for key, value in self.kv_store.items() if key in self.dirty_keys
+                        ])) for replica in (self.replicas - self.sample)
+                    ]))
 
                     # Clear the dirty keys and set a new sample
                     self.dirty_keys.clear()
