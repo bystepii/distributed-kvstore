@@ -152,42 +152,22 @@ class ShardMasterSimpleService(ShardMasterService):
 
             # Redistribute keys
 
-            # Case 1: server is the first server
-            if index == 0:
-                # iterate through all servers except the last one
-                for i in range(0, num_servers - 1):
-                    start, end = i * self.interval_size, (i + 1) * self.interval_size
-                    new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
-                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                        RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
-                    )
-            # Case 2: server is the last server
-            elif index == num_servers - 1:
-                # iterate backwards through all servers except the first one
-                for i in reversed(range(1, num_servers)):
-                    start, end = (i - 1) * self.interval_size, i * self.interval_size
-                    new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
-                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                        RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
-                    )
-            # Case 3: server is in the middle
-            else:
-                # iterate forwards through all servers except the last one
-                for i in range(index, num_servers - 1):
-                    # transfer only half of the keys to the next server forwards
-                    start, end = i * self.interval_size, (i + 1) * self.interval_size
-                    new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
-                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                        RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
-                    )
-                # iterate backwards through all servers except the first one
-                for i in reversed(range(1, index + 1)):
-                    # transfer the other half of the keys to the next server backwards
-                    start, end = (i - 1) * self.interval_size, i * self.interval_size
-                    new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
-                    KVStoreStub(self.channels[self.servers[i]]).Redistribute(
-                        RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
-                    )
+            # iterate forwards through all servers except the last one
+            for i in range(index, num_servers - 1):
+                # transfer only half of the keys to the next server forwards
+                start, end = i * self.interval_size, (i + 1) * self.interval_size
+                new_start, new_end = i * new_interval_size, (i + 1) * new_interval_size
+                KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                    RedistributeRequest(destination_server=self.servers[i + 1], lower_val=new_start, upper_val=end)
+                )
+            # iterate backwards through all servers except the first one
+            for i in reversed(range(1, index + 1)):
+                # transfer the other half of the keys to the next server backwards
+                start, end = (i - 1) * self.interval_size, i * self.interval_size
+                new_start, new_end = (i - 1) * new_interval_size, i * new_interval_size
+                KVStoreStub(self.channels[self.servers[i]]).Redistribute(
+                    RedistributeRequest(destination_server=self.servers[i - 1], lower_val=new_start, upper_val=end)
+                )
 
             # Remove server
             self.servers.remove(server)
