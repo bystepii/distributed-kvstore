@@ -19,7 +19,7 @@ py -m pip install -e .
 # Evaluation
 ## First subtask (simple KV storage)
 ```bash
-python3 eval/single_node_storage.py
+python3 eval/single_node.py
 ```
 
 ## Second subtask (sharded KV storage)
