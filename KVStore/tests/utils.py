@@ -51,7 +51,6 @@ def test_get(client: SimpleClient, key: int, expected_value: str) -> bool:
         result: bool = _get()
         if result is True:
             return True
-        time.sleep(WAIT)
     return False
 
 
@@ -72,7 +71,6 @@ def test_l_pop(client: SimpleClient, key: int, expected_value: str) -> bool:
         result: bool = _l_pop()
         if result is True:
             return True
-        time.sleep(WAIT)
     return False
 
 
@@ -93,7 +91,6 @@ def test_r_pop(client: SimpleClient, key: int, expected_value: str) -> bool:
         result: bool = _r_pop()
         if result is True:
             return True
-        time.sleep(WAIT)
     return False
 
 
@@ -110,7 +107,6 @@ def test_put(client: SimpleClient, key: int, value: str) -> bool:
         result: bool = _put()
         if result is True:
             return True
-        time.sleep(WAIT)
     return False
 
 
@@ -127,7 +123,6 @@ def test_append(client: SimpleClient, key: int, value: str) -> bool:
         result: bool = _append()
         if result is True:
             return True
-        time.sleep(WAIT)
     return False
 
 
@@ -144,7 +139,6 @@ def test_put(client: SimpleClient, key: int, value: str) -> bool:
         result: bool = _put()
         if result is True:
             return True
-        time.sleep(WAIT)
     return False
 
 
