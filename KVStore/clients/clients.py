@@ -67,14 +67,15 @@ class ShardClient(KVStorageService):
         self.channel = grpc.insecure_channel(shard_master_address)
         self.stub = ShardMasterStub(self.channel)
         self.channels: Dict[str, grpc.Channel] = {}
+        self.stubs: Dict[str, KVStoreStub] = {}
 
-    def get(self, key: int) -> Union[str, None]:
+    def get(self, key: int) -> str | None:
         return _get_return(self._query_shard(key).Get(GetRequest(key=key)))
 
-    def l_pop(self, key: int) -> Union[str, None]:
+    def l_pop(self, key: int) -> str | None:
         return _get_return(self._query_shard(key).LPop(GetRequest(key=key)))
 
-    def r_pop(self, key: int) -> Union[str, None]:
+    def r_pop(self, key: int) -> str | None:
         return _get_return(self._query_shard(key).RPop(GetRequest(key=key)))
 
     def put(self, key: int, value: str):
@@ -85,9 +86,12 @@ class ShardClient(KVStorageService):
 
     def _query_shard(self, key: int) -> KVStoreStub:
         server = self.stub.Query(QueryRequest(key=key)).server
+        if server in self.stubs:
+            return self.stubs[server]
         channel = self.channels.get(server, grpc.insecure_channel(server))
         self.channels[server] = channel
         stub = KVStoreStub(channel)
+        self.stubs[server] = stub
         return stub
 
     def stop(self):
@@ -112,7 +116,6 @@ class ShardReplicaClient(ShardClient):
 
     def __init__(self, shard_master_address: str):
         super().__init__(shard_master_address)
-        self.channels: Dict[str, grpc.Channel] = {}
 
     def get(self, key: int) -> str | None:
         return _get_return(self._query_replica(key, Operation.GET).Get(GetRequest(key=key)))
@@ -131,6 +134,10 @@ class ShardReplicaClient(ShardClient):
 
     def _query_replica(self, key: int, operation: Operation) -> KVStoreStub:
         server = self.stub.QueryReplica(QueryReplicaRequest(key=key, operation=operation)).server
+        if server in self.stubs:
+            return self.stubs[server]
         channel = self.channels.get(server, grpc.insecure_channel(server))
         self.channels[server] = channel
+        stub = KVStoreStub(channel)
+        self.stubs[server] = stub
         return KVStoreStub(self.channels[server])
