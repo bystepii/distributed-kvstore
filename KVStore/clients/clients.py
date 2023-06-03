@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import Union, Dict
-import grpc
 import logging
+from typing import Union, Dict
+
+import grpc
 
 from KVStore.kvstorage.kvstorage import KVStorageService
 from KVStore.protos.kv_store_pb2 import GetRequest, PutRequest, GetResponse
 from KVStore.protos.kv_store_pb2_grpc import KVStoreStub
-from KVStore.protos.kv_store_shardmaster_pb2 import QueryRequest, QueryResponse, QueryReplicaRequest, Operation
+from KVStore.protos.kv_store_shardmaster_pb2 import QueryRequest, QueryReplicaRequest, Operation
 from KVStore.protos.kv_store_shardmaster_pb2_grpc import ShardMasterStub
 
 logger = logging.getLogger(__name__)
@@ -21,10 +22,10 @@ def _get_return(ret: GetResponse) -> Union[str, None]:
 
 
 class SimpleClient(KVStorageService):
-
     """
     Simple client for key-value storage service
     """
+
     def __init__(self, kvstore_address: str):
         super().__init__()
         self.channel = grpc.insecure_channel(kvstore_address)

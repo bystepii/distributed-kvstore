@@ -6,14 +6,13 @@ import random
 import time
 from abc import ABC, abstractmethod
 from threading import Lock, Thread
-from typing import Union, List, Dict, Set
+from typing import List, Dict, Set
 
 import grpc
 import grpc.aio
 from google.protobuf.empty_pb2 import Empty
 from grpc import ServicerContext
 
-from KVStore.protos import kv_store_pb2_grpc
 from KVStore.protos.kv_store_pb2 import *
 from KVStore.protos.kv_store_pb2_grpc import KVStoreServicer, KVStoreStub
 from KVStore.protos.kv_store_shardmaster_pb2 import Role
